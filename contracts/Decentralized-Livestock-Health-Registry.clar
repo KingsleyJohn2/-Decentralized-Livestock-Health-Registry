@@ -70,6 +70,47 @@
 
 (define-map livestock-record-count uint uint)
 
+(define-map seller-profiles
+  principal
+  {
+    total-sales: uint,
+    total-ratings: uint,
+    rating-sum: uint,
+    reputation-score: uint,
+    first-sale-date: (optional uint)
+  }
+)
+
+(define-map seller-ratings
+  {rater: principal, seller: principal, livestock-id: uint}
+  {
+    rating: uint,
+    comment: (string-ascii 200),
+    rated-date: uint
+  }
+)
+
+(define-map veterinarian-ratings
+  {rater: principal, veterinarian: principal, livestock-id: uint}
+  {
+    rating: uint,
+    comment: (string-ascii 200),
+    rated-date: uint
+  }
+)
+
+(define-map purchase-history
+  uint
+  {
+    buyer: principal,
+    seller: principal,
+    purchase-date: uint,
+    price: uint,
+    rated-seller: bool,
+    rated-veterinarian: bool
+  }
+)
+
 (define-constant ERR-NOT-AUTHORIZED (err u100))
 (define-constant ERR-NOT-FOUND (err u101))
 (define-constant ERR-ALREADY-EXISTS (err u102))
@@ -79,6 +120,9 @@
 (define-constant ERR-INSUFFICIENT-FUNDS (err u106))
 (define-constant ERR-INVALID-STATUS (err u107))
 (define-constant ERR-CLAIM-EXISTS (err u108))
+(define-constant ERR-ALREADY-RATED (err u109))
+(define-constant ERR-INVALID-RATING (err u110))
+(define-constant ERR-NO-PURCHASE-RECORD (err u111))
 
 (define-public (register-veterinarian (license-number (string-ascii 50)) (specialization (string-ascii 100)))
   (let ((caller tx-sender))
@@ -226,6 +270,26 @@
       (map-set marketplace-listings livestock-id 
         (merge (unwrap-panic listing) {active: false}))
       
+      (map-set purchase-history livestock-id {
+        buyer: caller,
+        seller: seller,
+        purchase-date: stacks-block-height,
+        price: price,
+        rated-seller: false,
+        rated-veterinarian: false
+      })
+      
+      (let ((seller-profile (default-to 
+        {total-sales: u0, total-ratings: u0, rating-sum: u0, reputation-score: u0, first-sale-date: none}
+        (map-get? seller-profiles seller))))
+        (map-set seller-profiles seller (merge seller-profile {
+          total-sales: (+ (get total-sales seller-profile) u1),
+          first-sale-date: (if (is-none (get first-sale-date seller-profile))
+            (some stacks-block-height)
+            (get first-sale-date seller-profile))
+        }))
+      )
+      
       (ok true)
     )
   )
@@ -298,6 +362,80 @@
   )
 )
 
+(define-public (rate-seller (livestock-id uint) (rating uint) (comment (string-ascii 200)))
+  (let (
+    (caller tx-sender)
+    (purchase-record (map-get? purchase-history livestock-id))
+    (rating-key {rater: caller, seller: (get seller (unwrap! purchase-record ERR-NO-PURCHASE-RECORD)), livestock-id: livestock-id})
+  )
+    (asserts! (is-some purchase-record) ERR-NO-PURCHASE-RECORD)
+    (asserts! (is-eq caller (get buyer (unwrap-panic purchase-record))) ERR-NOT-AUTHORIZED)
+    (asserts! (not (get rated-seller (unwrap-panic purchase-record))) ERR-ALREADY-RATED)
+    (asserts! (and (>= rating u1) (<= rating u5)) ERR-INVALID-RATING)
+    (asserts! (is-none (map-get? seller-ratings rating-key)) ERR-ALREADY-RATED)
+    
+    (let ((seller (get seller (unwrap-panic purchase-record))))
+      (map-set seller-ratings rating-key {
+        rating: rating,
+        comment: comment,
+        rated-date: stacks-block-height
+      })
+      
+      (map-set purchase-history livestock-id 
+        (merge (unwrap-panic purchase-record) {rated-seller: true}))
+      
+      (let ((seller-profile (default-to 
+        {total-sales: u0, total-ratings: u0, rating-sum: u0, reputation-score: u0, first-sale-date: none}
+        (map-get? seller-profiles seller))))
+        (let ((new-total-ratings (+ (get total-ratings seller-profile) u1))
+              (new-rating-sum (+ (get rating-sum seller-profile) rating)))
+          (map-set seller-profiles seller (merge seller-profile {
+            total-ratings: new-total-ratings,
+            rating-sum: new-rating-sum,
+            reputation-score: (/ (* new-rating-sum u100) new-total-ratings)
+          }))
+        )
+      )
+      
+      (ok true)
+    )
+  )
+)
+
+(define-public (rate-veterinarian (livestock-id uint) (veterinarian principal) (rating uint) (comment (string-ascii 200)))
+  (let (
+    (caller tx-sender)
+    (purchase-record (map-get? purchase-history livestock-id))
+    (rating-key {rater: caller, veterinarian: veterinarian, livestock-id: livestock-id})
+    (vet-info (map-get? veterinarians veterinarian))
+  )
+    (asserts! (is-some purchase-record) ERR-NO-PURCHASE-RECORD)
+    (asserts! (is-eq caller (get buyer (unwrap-panic purchase-record))) ERR-NOT-AUTHORIZED)
+    (asserts! (not (get rated-veterinarian (unwrap-panic purchase-record))) ERR-ALREADY-RATED)
+    (asserts! (and (>= rating u1) (<= rating u5)) ERR-INVALID-RATING)
+    (asserts! (is-none (map-get? veterinarian-ratings rating-key)) ERR-ALREADY-RATED)
+    (asserts! (is-some vet-info) ERR-NOT-VETERINARIAN)
+    
+    (map-set veterinarian-ratings rating-key {
+      rating: rating,
+      comment: comment,
+      rated-date: stacks-block-height
+    })
+    
+    (map-set purchase-history livestock-id 
+      (merge (unwrap-panic purchase-record) {rated-veterinarian: true}))
+    
+    (let ((current-vet-info (unwrap-panic vet-info)))
+      (map-set veterinarians veterinarian (merge current-vet-info {
+        reputation-score: (+ (get reputation-score current-vet-info) 
+          (if (>= rating u4) u2 (if (>= rating u3) u0 (- u0 u1))))
+      }))
+    )
+    
+    (ok true)
+  )
+)
+
 (define-read-only (get-livestock-info (livestock-id uint))
   (map-get? livestock-registry livestock-id)
 )
@@ -332,4 +470,38 @@
 
 (define-read-only (get-livestock-owner (livestock-id uint))
   (nft-get-owner? livestock-nft livestock-id)
+)
+
+(define-read-only (get-seller-profile (seller principal))
+  (map-get? seller-profiles seller)
+)
+
+(define-read-only (get-seller-rating (rater principal) (seller principal) (livestock-id uint))
+  (map-get? seller-ratings {rater: rater, seller: seller, livestock-id: livestock-id})
+)
+
+(define-read-only (get-veterinarian-rating (rater principal) (veterinarian principal) (livestock-id uint))
+  (map-get? veterinarian-ratings {rater: rater, veterinarian: veterinarian, livestock-id: livestock-id})
+)
+
+(define-read-only (get-purchase-history (livestock-id uint))
+  (map-get? purchase-history livestock-id)
+)
+
+(define-read-only (get-seller-reputation-score (seller principal))
+  (let ((profile (map-get? seller-profiles seller)))
+    (if (is-some profile)
+      (some (get reputation-score (unwrap-panic profile)))
+      none
+    )
+  )
+)
+
+(define-read-only (get-veterinarian-reputation-score (veterinarian principal))
+  (let ((vet-info (map-get? veterinarians veterinarian)))
+    (if (is-some vet-info)
+      (some (get reputation-score (unwrap-panic vet-info)))
+      none
+    )
+  )
 )
