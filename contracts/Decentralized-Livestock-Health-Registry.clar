@@ -16,7 +16,8 @@
     current-health-status: (string-ascii 20),
     market-value: uint,
     insurance-amount: uint,
-    created-at: uint
+    created-at: uint,
+    retired: bool
   }
 )
 
@@ -164,12 +165,27 @@
       current-health-status: "healthy",
       market-value: market-value,
       insurance-amount: insurance-amount,
-      created-at: stacks-block-height
+      created-at: stacks-block-height,
+      retired: false
     })
     
     (map-set livestock-record-count livestock-id u0)
     (var-set next-livestock-id (+ livestock-id u1))
     (ok livestock-id)
+  )
+)
+
+(define-public (retire-livestock (livestock-id uint))
+  (let (
+    (caller tx-sender)
+    (livestock-info (map-get? livestock-registry livestock-id))
+    (owner (nft-get-owner? livestock-nft livestock-id))
+  )
+    (asserts! (is-some livestock-info) ERR-NOT-FOUND)
+    (asserts! (is-eq (some caller) owner) ERR-NOT-OWNER)
+    (asserts! (not (get retired (unwrap-panic livestock-info))) ERR-INVALID-STATUS)
+    (ok (map-set livestock-registry livestock-id
+      (merge (unwrap-panic livestock-info) {retired: true})))
   )
 )
 
@@ -190,6 +206,7 @@
     (asserts! (is-some vet-info) ERR-NOT-VETERINARIAN)
     (asserts! (get licensed (unwrap-panic vet-info)) ERR-NOT-VETERINARIAN)
     (asserts! (is-some livestock-info) ERR-NOT-FOUND)
+    (asserts! (not (get retired (unwrap-panic livestock-info))) ERR-INVALID-STATUS)
     (asserts! (<= severity u10) ERR-INVALID-AMOUNT)
     
     (map-set health-records 
@@ -231,6 +248,7 @@
   )
     (asserts! (is-some livestock-info) ERR-NOT-FOUND)
     (asserts! (is-eq (some caller) owner) ERR-NOT-OWNER)
+    (asserts! (not (get retired (unwrap-panic livestock-info))) ERR-INVALID-STATUS)
     (asserts! (> price u0) ERR-INVALID-AMOUNT)
     
     (let ((health-status (get current-health-status (unwrap-panic livestock-info))))
@@ -492,6 +510,15 @@
   (let ((profile (map-get? seller-profiles seller)))
     (if (is-some profile)
       (some (get reputation-score (unwrap-panic profile)))
+      none
+    )
+  )
+)
+
+(define-read-only (get-livestock-retired-status (livestock-id uint))
+  (let ((livestock-info (map-get? livestock-registry livestock-id)))
+    (if (is-some livestock-info)
+      (some (get retired (unwrap-panic livestock-info)))
       none
     )
   )
