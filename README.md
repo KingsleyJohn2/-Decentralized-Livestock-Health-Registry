@@ -13,6 +13,7 @@ A blockchain-powered solution for tracking livestock health records, ownership, 
 - 👨‍⚕️ **Veterinarian-Only Updates**: Only licensed vets can add health records
 - 🛡️ **Micro-Insurance**: Escrow-based insurance claims with veterinarian verification
 - 🛒 **Verified Marketplace**: Trade livestock with transparent health status
+- 💀 **Mortality Tracking**: Comprehensive death reporting and verification system
 
 ## 🚀 Getting Started
 
@@ -132,13 +133,59 @@ clarinet check
 - **Severity**: 1-10 scale
 - **Verified**: Veterinarian confirmation
 
+### Mortality Records
+- **Reported By**: Livestock owner
+- **Cause**: Reason for death (up to 100 characters)
+- **Reported Date**: Timestamp of report
+- **Verified**: Veterinarian confirmation status
+- **Verified By**: Veterinarian principal (optional)
+
 ## 🧪 Testing
 
 ```bash
 clarinet test
 ```
 
-## 🔒 Security Features
+## 🚚 Livestock Transport Tracking
+
+**Record Transport** (Livestock Owners Only)
+```clarity
+(contract-call? .livestock-registry record-transport
+  u1
+  "Farm A to Market B"
+  "sale")
+```
+
+**Verify Transport** (Veterinarians Only)
+```clarity
+(contract-call? .livestock-registry verify-transport u1 u0)
+```
+
+**Get Transport Record**
+```clarity
+(contract-call? .livestock-registry get-transport-record u1 u0)
+```
+
+## 💀 Livestock Mortality Reporting
+
+**Report Mortality** (Livestock Owners Only)
+```clarity
+(contract-call? .livestock-registry report-mortality
+  u1
+  "Natural causes - old age")
+```
+
+**Verify Mortality** (Veterinarians Only)
+```clarity
+(contract-call? .livestock-registry verify-mortality u1)
+```
+
+**Get Mortality Record**
+```clarity
+(contract-call? .livestock-registry get-mortality-record u1)
+```
+
+## � Security Features
 
 - ✅ **Access Control**: Role-based permissions for veterinarians
 - ✅ **Ownership Verification**: NFT-based ownership checks
@@ -164,6 +211,10 @@ clarinet test
 - **106**: Insufficient funds
 - **107**: Invalid status
 - **108**: Claim already exists
+- **109**: Already rated
+- **110**: Invalid rating
+- **111**: No purchase record
+- **112**: Already deceased
 
 ## 🤝 Contributing
 

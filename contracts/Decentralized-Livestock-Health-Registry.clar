@@ -99,6 +99,27 @@
     rated-date: uint
   }
 )
+(define-map breeding-records
+  uint
+  {
+    sire-id: (optional uint),
+    dam-id: (optional uint),
+    breeding-date: uint,
+    breeder: principal
+  }
+)
+
+(define-map lease-agreements
+  uint
+  {
+    lessee: principal,
+    lease-start: uint,
+    lease-end: uint,
+    daily-rate: uint,
+    total-paid: uint,
+    active: bool
+  }
+)
 
 (define-map purchase-history
   uint
@@ -109,6 +130,30 @@
     price: uint,
     rated-seller: bool,
     rated-veterinarian: bool
+  }
+)
+
+(define-map livestock-transport-records
+  {livestock-id: uint, transport-id: uint}
+  {
+    transporter: principal,
+    destination: (string-ascii 100),
+    transport-date: uint,
+    purpose: (string-ascii 50),
+    verified: bool
+  }
+)
+
+(define-map livestock-transport-count uint uint)
+
+(define-map mortality-records
+  uint
+  {
+    reported-by: principal,
+    cause: (string-ascii 100),
+    reported-date: uint,
+    verified: bool,
+    verified-by: (optional principal)
   }
 )
 
@@ -124,6 +169,7 @@
 (define-constant ERR-ALREADY-RATED (err u109))
 (define-constant ERR-INVALID-RATING (err u110))
 (define-constant ERR-NO-PURCHASE-RECORD (err u111))
+(define-constant ERR-ALREADY-DECEASED (err u112))
 
 (define-public (register-veterinarian (license-number (string-ascii 50)) (specialization (string-ascii 100)))
   (let ((caller tx-sender))
@@ -524,6 +570,41 @@
   )
 )
 
+(define-read-only (get-breeding-record (livestock-id uint))
+  (map-get? breeding-records livestock-id)
+)
+
+(define-public (record-breeding
+  (livestock-id uint)
+  (sire-id (optional uint))
+  (dam-id (optional uint))
+)
+  (let (
+    (caller tx-sender)
+    (livestock-info (map-get? livestock-registry livestock-id))
+    (sire-info (if (is-some sire-id) (map-get? livestock-registry (unwrap-panic sire-id)) none))
+    (dam-info (if (is-some dam-id) (map-get? livestock-registry (unwrap-panic dam-id)) none))
+  )
+    (asserts! (is-some livestock-info) ERR-NOT-FOUND)
+    (asserts! (is-eq caller (get owner (unwrap-panic livestock-info))) ERR-NOT-OWNER)
+    (asserts! (not (get retired (unwrap-panic livestock-info))) ERR-INVALID-STATUS)
+    (if (is-some sire-id)
+      (asserts! (is-some sire-info) ERR-NOT-FOUND)
+      true
+    )
+    (if (is-some dam-id)
+      (asserts! (is-some dam-info) ERR-NOT-FOUND)
+      true
+    )
+    (ok (map-set breeding-records livestock-id {
+      sire-id: sire-id,
+      dam-id: dam-id,
+      breeding-date: stacks-block-height,
+      breeder: caller
+    }))
+  )
+)
+
 (define-read-only (get-veterinarian-reputation-score (veterinarian principal))
   (let ((vet-info (map-get? veterinarians veterinarian)))
     (if (is-some vet-info)
@@ -531,4 +612,165 @@
       none
     )
   )
+)
+
+(define-public (lease-livestock (livestock-id uint) (lease-end uint) (daily-rate uint))
+  (let (
+    (caller tx-sender)
+    (livestock-info (map-get? livestock-registry livestock-id))
+    (owner (nft-get-owner? livestock-nft livestock-id))
+    (lease-duration (- lease-end stacks-block-height))
+    (total-cost (* daily-rate lease-duration))
+  )
+    (asserts! (is-some livestock-info) ERR-NOT-FOUND)
+    (asserts! (is-eq (some caller) owner) ERR-NOT-OWNER)
+    (asserts! (not (get retired (unwrap-panic livestock-info))) ERR-INVALID-STATUS)
+    (asserts! (> lease-end stacks-block-height) ERR-INVALID-AMOUNT)
+    (asserts! (> daily-rate u0) ERR-INVALID-AMOUNT)
+    (asserts! (is-none (map-get? lease-agreements livestock-id)) ERR-ALREADY-EXISTS)
+    (ok (map-set lease-agreements livestock-id {
+      lessee: caller,
+      lease-start: stacks-block-height,
+      lease-end: lease-end,
+      daily-rate: daily-rate,
+      total-paid: u0,
+      active: true
+    }))
+  )
+)
+
+(define-public (rent-livestock (livestock-id uint) (rental-days uint))
+  (let (
+    (caller tx-sender)
+    (lease-info (map-get? lease-agreements livestock-id))
+    (livestock-info (map-get? livestock-registry livestock-id))
+    (lease (unwrap! lease-info ERR-NOT-FOUND))
+    (rental-cost (* (get daily-rate lease) rental-days))
+  )
+    (asserts! (is-some livestock-info) ERR-NOT-FOUND)
+    (asserts! (get active lease) ERR-INVALID-STATUS)
+    (asserts! (<= (+ stacks-block-height rental-days) (get lease-end lease)) ERR-INVALID-AMOUNT)
+    (try! (stx-transfer? rental-cost caller (get lessee lease)))
+    (map-set lease-agreements livestock-id
+      (merge lease {total-paid: (+ (get total-paid lease) rental-cost)}))
+    (ok true)
+  )
+)
+
+(define-public (end-lease (livestock-id uint))
+  (let (
+    (caller tx-sender)
+    (lease-info (map-get? lease-agreements livestock-id))
+    (livestock-info (map-get? livestock-registry livestock-id))
+    (owner (nft-get-owner? livestock-nft livestock-id))
+  )
+    (asserts! (is-some livestock-info) ERR-NOT-FOUND)
+    (asserts! (is-eq (some caller) owner) ERR-NOT-OWNER)
+    (asserts! (is-some lease-info) ERR-NOT-FOUND)
+    (asserts! (get active (unwrap-panic lease-info)) ERR-INVALID-STATUS)
+    (ok (map-set lease-agreements livestock-id
+      (merge (unwrap-panic lease-info) {active: false})))
+  )
+)
+
+(define-read-only (get-lease-agreement (livestock-id uint))
+  (map-get? lease-agreements livestock-id)
+)
+
+(define-public (record-transport
+  (livestock-id uint)
+  (destination (string-ascii 100))
+  (purpose (string-ascii 50))
+)
+  (let (
+    (caller tx-sender)
+    (livestock-info (map-get? livestock-registry livestock-id))
+    (owner (nft-get-owner? livestock-nft livestock-id))
+    (current-transport-count (default-to u0 (map-get? livestock-transport-count livestock-id)))
+  )
+    (asserts! (is-some livestock-info) ERR-NOT-FOUND)
+    (asserts! (is-eq (some caller) owner) ERR-NOT-OWNER)
+    (asserts! (not (get retired (unwrap-panic livestock-info))) ERR-INVALID-STATUS)
+
+    (map-set livestock-transport-records
+      {livestock-id: livestock-id, transport-id: current-transport-count}
+      {
+        transporter: caller,
+        destination: destination,
+        transport-date: stacks-block-height,
+        purpose: purpose,
+        verified: false
+      }
+    )
+
+    (map-set livestock-transport-count livestock-id (+ current-transport-count u1))
+    (ok current-transport-count)
+  )
+)
+
+(define-public (verify-transport (livestock-id uint) (transport-id uint))
+  (let (
+    (caller tx-sender)
+    (vet-info (map-get? veterinarians caller))
+    (transport-key {livestock-id: livestock-id, transport-id: transport-id})
+    (transport-info (map-get? livestock-transport-records transport-key))
+  )
+    (asserts! (is-some vet-info) ERR-NOT-VETERINARIAN)
+    (asserts! (get licensed (unwrap-panic vet-info)) ERR-NOT-VETERINARIAN)
+    (asserts! (is-some transport-info) ERR-NOT-FOUND)
+
+    (map-set livestock-transport-records transport-key
+      (merge (unwrap-panic transport-info) {verified: true}))
+    (ok true)
+  )
+)
+
+(define-read-only (get-transport-record (livestock-id uint) (transport-id uint))
+  (map-get? livestock-transport-records {livestock-id: livestock-id, transport-id: transport-id})
+)
+
+(define-read-only (get-transport-count (livestock-id uint))
+  (default-to u0 (map-get? livestock-transport-count livestock-id))
+)
+
+(define-public (report-mortality (livestock-id uint) (cause (string-ascii 100)))
+  (let (
+    (caller tx-sender)
+    (livestock-info (map-get? livestock-registry livestock-id))
+    (owner (nft-get-owner? livestock-nft livestock-id))
+    (existing-mortality (map-get? mortality-records livestock-id))
+  )
+    (asserts! (is-some livestock-info) ERR-NOT-FOUND)
+    (asserts! (is-eq (some caller) owner) ERR-NOT-OWNER)
+    (asserts! (not (get retired (unwrap-panic livestock-info))) ERR-INVALID-STATUS)
+    (asserts! (is-none existing-mortality) ERR-ALREADY-DECEASED)
+    (ok (map-set mortality-records livestock-id {
+      reported-by: caller,
+      cause: cause,
+      reported-date: stacks-block-height,
+      verified: false,
+      verified-by: none
+    }))
+  )
+)
+
+(define-public (verify-mortality (livestock-id uint))
+  (let (
+    (caller tx-sender)
+    (vet-info (map-get? veterinarians caller))
+    (mortality-info (map-get? mortality-records livestock-id))
+  )
+    (asserts! (is-some vet-info) ERR-NOT-VETERINARIAN)
+    (asserts! (get licensed (unwrap-panic vet-info)) ERR-NOT-VETERINARIAN)
+    (asserts! (is-some mortality-info) ERR-NOT-FOUND)
+    (ok (map-set mortality-records livestock-id
+      (merge (unwrap-panic mortality-info) {
+        verified: true,
+        verified-by: (some caller)
+      })))
+  )
+)
+
+(define-read-only (get-mortality-record (livestock-id uint))
+  (map-get? mortality-records livestock-id)
 )
