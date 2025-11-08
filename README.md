@@ -13,6 +13,7 @@ A blockchain-powered solution for tracking livestock health records, ownership, 
 - 👨‍⚕️ **Veterinarian-Only Updates**: Only licensed vets can add health records
 - 🛡️ **Micro-Insurance**: Escrow-based insurance claims with veterinarian verification
 - 🛒 **Verified Marketplace**: Trade livestock with transparent health status
+- 🚨 **Emergency Alert System**: Real-time health crisis reporting and veterinarian response tracking
 - 💀 **Mortality Tracking**: Comprehensive death reporting and verification system
 
 ## 🚀 Getting Started
@@ -137,6 +138,16 @@ clarinet check
 - **Reported By**: Livestock owner
 - **Cause**: Reason for death (up to 100 characters)
 - **Reported Date**: Timestamp of report
+### Emergency Alerts
+- **Alert Type**: disease_outbreak/injury/illness/other
+- **Description**: Detailed incident description
+- **Severity**: 1-10 scale for prioritization
+- **Reported By**: Alert initiator
+- **Reported At**: Timestamp of alert
+- **Resolved**: Resolution status
+- **Resolved By**: Veterinarian principal (optional)
+- **Resolved At**: Resolution timestamp (optional)
+
 - **Verified**: Veterinarian confirmation status
 - **Verified By**: Veterinarian principal (optional)
 
@@ -182,11 +193,42 @@ clarinet test
 
 **Get Mortality Record**
 ```clarity
+## 🚨 Emergency Alert System
+
+- ✅ **Emergency Response**: Rapid alert system for health crises
+**Report Emergency Alert** (Anyone)
+```clarity
+(contract-call? .livestock-registry report-emergency-alert
+  u1
+  "disease_outbreak"
+  "Suspected foot-and-mouth disease symptoms observed"
+  u8)
+```
+5. **🚨 Emergency Responders**: Rapid health crisis detection and coordinated response
+
+**Resolve Emergency Alert** (Veterinarians Only)
+```clarity
+(contract-call? .livestock-registry resolve-emergency-alert u1 u0)
+```
+
+**Get Emergency Alert**
+```clarity
+(contract-call? .livestock-registry get-emergency-alert u0)
+```
+
+**Get Emergency Alert Count**
+```clarity
+(contract-call? .livestock-registry get-emergency-alert-count u1)
+```
+
 (contract-call? .livestock-registry get-mortality-record u1)
 ```
 
 ## � Security Features
 
+- **113**: Emergency alert already exists
+- **114**: Alert not found
+- **115**: Alert already resolved
 - ✅ **Access Control**: Role-based permissions for veterinarians
 - ✅ **Ownership Verification**: NFT-based ownership checks
 - ✅ **Financial Safety**: Amount validation and balance checks

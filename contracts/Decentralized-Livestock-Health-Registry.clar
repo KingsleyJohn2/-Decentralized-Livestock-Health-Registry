@@ -774,3 +774,88 @@
 (define-read-only (get-mortality-record (livestock-id uint))
   (map-get? mortality-records livestock-id)
 )
+
+(define-map emergency-alerts
+  uint
+  {
+    livestock-id: uint,
+    alert-type: (string-ascii 30),
+    description: (string-ascii 200),
+    severity: uint,
+    reported-by: principal,
+    reported-at: uint,
+    resolved: bool,
+    resolved-by: (optional principal),
+    resolved-at: (optional uint)
+  }
+)
+
+(define-map emergency-alert-count uint uint)
+
+(define-constant ERR-EMERGENCY-ALERT-EXISTS (err u113))
+(define-constant ERR-ALERT-NOT-FOUND (err u114))
+(define-constant ERR-ALERT-ALREADY-RESOLVED (err u115))
+
+(define-public (report-emergency-alert
+  (livestock-id uint)
+  (alert-type (string-ascii 30))
+  (description (string-ascii 200))
+  (severity uint)
+)
+  (let (
+    (caller tx-sender)
+    (livestock-info (map-get? livestock-registry livestock-id))
+    (current-alert-count (default-to u0 (map-get? emergency-alert-count livestock-id)))
+  )
+    (asserts! (is-some livestock-info) ERR-NOT-FOUND)
+    (asserts! (not (get retired (unwrap-panic livestock-info))) ERR-INVALID-STATUS)
+    (asserts! (<= severity u10) ERR-INVALID-AMOUNT)
+    (asserts! (> severity u0) ERR-INVALID-AMOUNT)
+
+    (map-set emergency-alerts current-alert-count {
+      livestock-id: livestock-id,
+      alert-type: alert-type,
+      description: description,
+      severity: severity,
+      reported-by: caller,
+      reported-at: stacks-block-height,
+      resolved: false,
+      resolved-by: none,
+      resolved-at: none
+    })
+
+    (map-set emergency-alert-count livestock-id (+ current-alert-count u1))
+    (ok current-alert-count)
+  )
+)
+
+(define-public (resolve-emergency-alert (livestock-id uint) (alert-id uint))
+  (let (
+    (caller tx-sender)
+    (vet-info (map-get? veterinarians caller))
+    (alert-info (map-get? emergency-alerts alert-id))
+  )
+    (asserts! (is-some vet-info) ERR-NOT-VETERINARIAN)
+    (asserts! (get licensed (unwrap-panic vet-info)) ERR-NOT-VETERINARIAN)
+    (asserts! (is-some alert-info) ERR-ALERT-NOT-FOUND)
+    (asserts! (is-eq livestock-id (get livestock-id (unwrap-panic alert-info))) ERR-NOT-FOUND)
+    (asserts! (not (get resolved (unwrap-panic alert-info))) ERR-ALERT-ALREADY-RESOLVED)
+
+    (map-set emergency-alerts alert-id
+      (merge (unwrap-panic alert-info) {
+        resolved: true,
+        resolved-by: (some caller),
+        resolved-at: (some stacks-block-height)
+      })
+    )
+    (ok true)
+  )
+)
+
+(define-read-only (get-emergency-alert (alert-id uint))
+  (map-get? emergency-alerts alert-id)
+)
+
+(define-read-only (get-emergency-alert-count (livestock-id uint))
+  (default-to u0 (map-get? emergency-alert-count livestock-id))
+)
