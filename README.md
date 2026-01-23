@@ -264,6 +264,26 @@ clarinet test
 2. Create feature branch
 3. Submit pull request with tests
 
+## 🧬 Genetic Testing Records
+
+**Record Genetic Test** (Veterinarians Only)
+```clarity
+(contract-call? .livestock-registry record-genetic-test
+  u1
+  "DNA Marker Test"
+  "Positive for disease resistance gene")
+```
+
+**Get Genetic Test Record**
+```clarity
+(contract-call? .livestock-registry get-genetic-test-record u1 u0)
+```
+
+**Get Genetic Test Count**
+```clarity
+(contract-call? .livestock-registry get-genetic-test-count u1)
+```
+
 ## 📄 License
 
 MIT License - Build the future of livestock management! 🚀

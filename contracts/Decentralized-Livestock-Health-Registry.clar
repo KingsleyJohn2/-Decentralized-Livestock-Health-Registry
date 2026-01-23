@@ -859,3 +859,57 @@
 (define-read-only (get-emergency-alert-count (livestock-id uint))
   (default-to u0 (map-get? emergency-alert-count livestock-id))
 )
+
+(define-map genetic-test-records
+  {livestock-id: uint, test-id: uint}
+  {
+    veterinarian: principal,
+    test-type: (string-ascii 50),
+    result: (string-ascii 200),
+    test-date: uint,
+    verified: bool
+  }
+)
+
+(define-map genetic-test-count uint uint)
+
+(define-public (record-genetic-test
+  (livestock-id uint)
+  (test-type (string-ascii 50))
+  (result (string-ascii 200))
+)
+  (let (
+    (caller tx-sender)
+    (vet-info (map-get? veterinarians caller))
+    (livestock-info (map-get? livestock-registry livestock-id))
+    (current-test-count (default-to u0 (map-get? genetic-test-count livestock-id)))
+  )
+    (asserts! (is-some vet-info) ERR-NOT-VETERINARIAN)
+    (asserts! (get licensed (unwrap-panic vet-info)) ERR-NOT-VETERINARIAN)
+    (asserts! (is-some livestock-info) ERR-NOT-FOUND)
+    (asserts! (not (get retired (unwrap-panic livestock-info))) ERR-INVALID-STATUS)
+
+    (map-set genetic-test-records
+      {livestock-id: livestock-id, test-id: current-test-count}
+      {
+        veterinarian: caller,
+        test-type: test-type,
+        result: result,
+        test-date: stacks-block-height,
+        verified: true
+      }
+    )
+
+    (map-set genetic-test-count livestock-id (+ current-test-count u1))
+
+    (ok current-test-count)
+  )
+)
+
+(define-read-only (get-genetic-test-record (livestock-id uint) (test-id uint))
+  (map-get? genetic-test-records {livestock-id: livestock-id, test-id: test-id})
+)
+
+(define-read-only (get-genetic-test-count (livestock-id uint))
+  (default-to u0 (map-get? genetic-test-count livestock-id))
+)
